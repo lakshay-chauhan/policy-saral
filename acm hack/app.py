@@ -7,7 +7,7 @@ import uuid
 
 app = Flask(__name__)
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = ""
 
 @app.route('/')
 def index():
@@ -78,3 +78,4 @@ def tts():
 if __name__ == '__main__':
     os.makedirs("static", exist_ok=True)
     app.run(debug=True)
+
