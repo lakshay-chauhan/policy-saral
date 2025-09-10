@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek V3.1 Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .listening-indicator {
+            height: 6px;
+            width: 6px;
+            border-radius: 50%;
+            background-color: red;
+            display: inline-block;
+            margin-left: 8px;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-2xl flex flex-col items-center">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6">DeepSeek V3.1 Chat</h1>
+        <p class="text-gray-600 mb-6 text-center">Powered by OpenRouter.ai</p>
+
+        <div id="response-container" class="w-full bg-gray-50 p-6 rounded-xl mb-6 min-h-[100px] max-h-[400px] overflow-y-auto border border-gray-200 text-gray-800 text-sm leading-relaxed">
+            <span id="loading-indicator" class="hidden text-gray-500 italic">Generating response...</span>
+            <div id="response-content"></div>
+        </div>
+        
+        <div class="w-full">
+            <textarea id="user-input" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" rows="4" placeholder="Type your message here..."></textarea>
+            
+            <!-- Send + Voice buttons side by side -->
+            <div class="flex gap-2 mt-4 items-center">
+                <button id="send-button" class="flex-1 bg-indigo-600 text-white py-3 px-6 rounded-xl font-semibold shadow-md hover:bg-indigo-700 transition-colors duration-200">
+                    Send
+                </button>
+                <div class="flex items-center">
+                    <button id="voice-button" class="bg-red-600 text-white px-6 rounded-xl font-semibold shadow-md hover:bg-red-700 transition-colors duration-200">
+                        🎤
+                    </button>
+                    <span id="listening-indicator" class="hidden listening-indicator"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const sendButton = document.getElementById('send-button');
+            const userInput = document.getElementById('user-input');
+            const responseContent = document.getElementById('response-content');
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const responseContainer = document.getElementById('response-container');
+            const voiceButton = document.getElementById('voice-button');
+            const listeningIndicator = document.getElementById('listening-indicator');
+
+            // --- Send message handler ---
+            sendButton.addEventListener('click', async () => {
+                const message = userInput.value.trim();
+                if (!message) {
+                    alert('Please enter a message.');
+                    return;
+                }
+
+                loadingIndicator.classList.remove('hidden');
+                responseContent.textContent = '';
+                sendButton.disabled = true;
+
+                const oldBtn = document.getElementById('speak-button');
+                if (oldBtn) oldBtn.remove();
+                const oldAudio = document.getElementById('tts-audio');
+                if (oldAudio) oldAudio.remove();
+
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Something went wrong.');
+                    }
+
+                    const data = await response.json();
+                    responseContent.textContent = data.response;
+                    userInput.value = '';
+
+                    // Create Speak button
+                    const speakButton = document.createElement('button');
+                    speakButton.id = 'speak-button';
+                    speakButton.textContent = '🔊 Speak Response';
+                    speakButton.className = 'mt-4 bg-green-600 text-white py-2 px-4 rounded-xl font-medium shadow hover:bg-green-700 transition-colors duration-200';
+                    speakButton.addEventListener('click', async () => {
+                        try {
+                            const ttsResponse = await fetch('/tts', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ text: data.response }),
+                            });
+
+                            if (!ttsResponse.ok) throw new Error("TTS request failed");
+
+                            const ttsData = await ttsResponse.json();
+                            if (ttsData.audio_url) {
+                                let audioPlayer = document.getElementById('tts-audio');
+                                if (!audioPlayer) {
+                                    audioPlayer = document.createElement('audio');
+                                    audioPlayer.id = 'tts-audio';
+                                    audioPlayer.controls = true;
+                                    audioPlayer.className = 'mt-4 w-full';
+                                    responseContainer.appendChild(audioPlayer);
+                                }
+                                audioPlayer.src = ttsData.audio_url;
+                                audioPlayer.play();
+                            }
+                        } catch (err) {
+                            alert("Error generating speech: " + err.message);
+                        }
+                    });
+
+                    responseContainer.appendChild(speakButton);
+
+                } catch (error) {
+                    responseContent.textContent = `Error: ${error.message}`;
+                    responseContent.classList.add('text-red-500');
+                    console.error('Fetch error:', error);
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                    sendButton.disabled = false;
+                }
+            });
+
+            // --- Voice recognition setup ---
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            let recognition;
+            let listening = false;
+
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.lang = "en-US";
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    userInput.value = transcript;
+                };
+
+                recognition.onerror = (event) => {
+                    alert("Voice recognition error: " + event.error);
+                    listening = false;
+                    voiceButton.textContent = "🎤";
+                    listeningIndicator.classList.add('hidden');
+                };
+
+                recognition.onend = () => {
+                    listening = false;
+                    voiceButton.textContent = "🎤";
+                    listeningIndicator.classList.add('hidden');
+                };
+            }
+
+            // --- Mic button click: start/stop listening ---
+            voiceButton.addEventListener("click", () => {
+                if (!recognition) return;
+
+                if (!listening) {
+                    recognition.start();
+                    listening = true;
+                    voiceButton.textContent = "🎙️ Listening... (click to stop)";
+                    listeningIndicator.classList.remove('hidden');
+                } else {
+                    recognition.stop();
+                    listening = false;
+                    voiceButton.textContent = "🎤";
+                    listeningIndicator.classList.add('hidden');
+                }
+            });
+        });
+    </script>
+
+</body>
+</html>
